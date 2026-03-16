@@ -6,22 +6,57 @@ MCP server para consultar metadata de Salesforce en modo solo lectura. Diseñado
 
 - **Multi-org**: Configura múltiples orgs (sandboxes, UAT, producción) y selecciona cuál usar en cada consulta
 - **Solo lectura**: Todas las operaciones son de consulta, nunca modifican la org
-- **Producción segura**: Los warnings y logsalertan cuando te conectas a producción
+- **Producción segura**: Requiere confirmación explícita para acceder a producción
+- **Query sanitization**: Solo SELECT permitido, con límites enforced
 - **Enriquecimiento**: Las respuestas incluyen información adicional útil para razonamiento
 - **Comparación de schemas**: Compara objetos y campos entre dos orgs
+- **Auditoría completa**: Logs de todas las operaciones con sanitización
+
+## Seguridad
+
+### Confirmación de Producción
+Para acceder a cualquier tool en una org marcada como `production`, primero debes confirmar con `confirm_production_access`:
+
+```javascript
+// Primero: confirmar acceso
+{
+  "tool": "confirm_production_access",
+  "params": {
+    "orgAlias": "banagro-prod",
+    "confirmationToken": "TU_TOKEN"
+  }
+}
+
+// Después: usar otras tools
+{
+  "tool": "list_objects",
+  "params": {
+    "orgAlias": "banagro-prod"
+  }
+}
+```
+
+### Query Restrictions
+- Solo SELECT queries permitidas
+- SOSL bloqueado
+- ALL ROWS bloqueado
+- LIMIT forzado (100 en prod, 1000 en sandbox)
+- Producción limitada a 1000 registros max
+- Tooling API limitada a 500 registros max en prod
 
 ## Herramientas Disponibles
 
-| Herramienta | Descripción |
-|-------------|-------------|
-| `list_objects` | Lista todos los objetos disponibles en la org |
-| `describe_object` | Describe un objeto completo con sus campos |
-| `list_fields` | Lista los campos de un objeto |
-| `get_field_metadata` | Obtiene metadata detallada de un campo |
-| `get_formula_field_details` | Analiza campos fórmula (referencias, complejidad, impacto) |
-| `query_soql_readonly` | Ejecuta queries SOQL en modo solo lectura |
-| `query_tooling_readonly` | Ejecuta queries en Tooling API (metadata, Apex) |
-| `compare_schemas` | Compara schemas entre dos orgs |
+| Herramienta | Descripción | Requiere Confirmación en Prod |
+|-------------|-------------|-------------------------------|
+| `confirm_production_access` | Confirma acceso a producción | ❌ No |
+| `list_objects` | Lista todos los objetos disponibles en la org | ✅ Sí |
+| `describe_object` | Describe un objeto completo con sus campos | ✅ Sí |
+| `list_fields` | Lista los campos de un objeto | ✅ Sí |
+| `get_field_metadata` | Obtiene metadata detallada de un campo | ✅ Sí |
+| `get_formula_field_details` | Analiza campos fórmula (referencias, complejidad, impacto) | ✅ Sí |
+| `query_soql_readonly` | Ejecuta queries SOQL (SELECT solo) | ✅ Sí |
+| `query_tooling_readonly` | Ejecuta queries en Tooling API (SELECT solo) | ✅ Sí |
+| `compare_schemas` | Compara schemas entre dos orgs | ✅ Sí |
 
 ## Requisitos
 
@@ -56,20 +91,28 @@ cp .env.example .env
 
 2. Edita `.env` con tus credenciales:
 
-```json
-SALESFORCE_ORGS_JSON='[
-  {
-    "alias": "mi-sandbox",
-    "environment": "sandbox",
-    "loginUrl": "https://test.salesforce.com",
-    "username": "mi.usuario@miempresa.com",
-    "password": "micontraseña",
-    "securityToken": "miSecurityToken"
-  }
-]'
+```bash
+# Org 1: Sandbox Dev
+SALESFORCE_BANAGRO_DEV_ALIAS=banagro-dev
+SALESFORCE_BANAGRO_DEV_ENVIRONMENT=sandbox
+SALESFORCE_BANAGRO_DEV_LOGIN_URL=https://test.salesforce.com
+SALESFORCE_BANAGRO_DEV_USERNAME=user@dev.org
+SALESFORCE_BANAGRO_DEV_PASSWORD=***
+SALESFORCE_BANAGRO_DEV_SECURITY_TOKEN=***
 
-DEFAULT_ORG_ALIAS=mi-sandbox
-LOG_LEVEL=info
+# Org 2: Production
+SALESFORCE_BANAGRO_PROD_ALIAS=banagro-prod
+SALESFORCE_BANAGRO_PROD_ENVIRONMENT=production
+SALESFORCE_BANAGRO_PROD_LOGIN_URL=https://login.salesforce.com
+SALESFORCE_BANAGRO_PROD_USERNAME=user@prod.org
+SALESFORCE_BANAGRO_PROD_PASSWORD=***
+SALESFORCE_BANAGRO_PROD_SECURITY_TOKEN=***
+
+# Token de confirmación para producción
+PRODUCTION_CONFIRMATION_TOKEN=mi_token_secreto
+
+# Org por defecto
+DEFAULT_ORG_ALIAS=banagro-dev
 ```
 
 ### Formato de Configuración
@@ -78,28 +121,16 @@ Cada org necesita:
 
 | Campo | Descripción | Ejemplo |
 |-------|-------------|---------|
-| `alias` | Identificador único | `dev`, `uat`, `prod` |
-| `environment` | Tipo de entorno | `sandbox` o `production` |
-| `loginUrl` | URL de login | `https://test.salesforce.com` (sandbox) o `https://login.salesforce.com` (prod) |
-| `username` | Usuario de Salesforce | `admin@miempresa.com` |
-| `password` | Contraseña | `********` |
-| `securityToken` | Security token | `********` |
+| `SALESFORCE_<PREFIX>_ALIAS` | Identificador único | `banagro-dev` |
+| `SALESFORCE_<PREFIX>_ENVIRONMENT` | Tipo de entorno | `sandbox` o `production` |
+| `SALESFORCE_<PREFIX>_LOGIN_URL` | URL de login | `https://test.salesforce.com` (sandbox) o `https://login.salesforce.com` (prod) |
+| `SALESFORCE_<PREFIX>_USERNAME` | Usuario de Salesforce | `admin@miempresa.com` |
+| `SALESFORCE_<PREFIX>_PASSWORD` | Contraseña | `********` |
+| `SALESFORCE_<PREFIX>_SECURITY_TOKEN` | Security token | `********` |
 
-**Nota**: El environment `production` activa modo solo lectura y muestra warnings.
+**Nota**: El sistema detecta automáticamente las orgs buscando variables que terminen en `_ALIAS`.
 
 ## Uso con OpenCode
-
-### Opción 1: Instalación global
-
-```bash
-npm install -g mcp-salesforce-reader
-```
-
-### Opción 2: Instalación local
-
-```bash
-npm install mcp-salesforce-reader --save-dev
-```
 
 ### Configuración en `opencode.json`
 
@@ -110,8 +141,19 @@ npm install mcp-salesforce-reader --save-dev
       "command": "node",
       "args": ["./node_modules/mcp-salesforce-reader/dist/index.js"],
       "env": {
-        "SALESFORCE_ORGS_JSON": "[{\"alias\":\"dev\",\"environment\":\"sandbox\",\"loginUrl\":\"https://test.salesforce.com\",\"username\":\"user@dev.org\",\"password\":\"xxx\",\"securityToken\":\"xxx\"},{\"alias\":\"prod\",\"environment\":\"production\",\"loginUrl\":\"https://login.salesforce.com\",\"username\":\"user@prod.org\",\"password\":\"xxx\",\"securityToken\":\"xxx\"}]",
-        "DEFAULT_ORG_ALIAS": "dev",
+        "SALESFORCE_BANAGRO_DEV_ALIAS": "banagro-dev",
+        "SALESFORCE_BANAGRO_DEV_ENVIRONMENT": "sandbox",
+        "SALESFORCE_BANAGRO_DEV_LOGIN_URL": "https://test.salesforce.com",
+        "SALESFORCE_BANAGRO_DEV_USERNAME": "user@dev.org",
+        "SALESFORCE_BANAGRO_DEV_PASSWORD": "xxx",
+        "SALESFORCE_BANAGRO_DEV_SECURITY_TOKEN": "xxx",
+        "SALESFORCE_BANAGRO_PROD_ALIAS": "banagro-prod",
+        "SALESFORCE_BANAGRO_PROD_ENVIRONMENT": "production",
+        "SALESFORCE_BANAGRO_PROD_LOGIN_URL": "https://login.salesforce.com",
+        "SALESFORCE_BANAGRO_PROD_USERNAME": "user@prod.org",
+        "SALESFORCE_BANAGRO_PROD_PASSWORD": "xxx",
+        "SALESFORCE_BANAGRO_PROD_SECURITY_TOKEN": "xxx",
+        "PRODUCTION_CONFIRMATION_TOKEN": "xxx",
         "LOG_LEVEL": "info"
       }
     }
@@ -121,11 +163,20 @@ npm install mcp-salesforce-reader --save-dev
 
 ## Ejemplos de Uso
 
+### Confirmar acceso a producción
+
+```json
+{
+  "orgAlias": "banagro-prod",
+  "confirmationToken": "mi_token_secreto"
+}
+```
+
 ### Listar objetos
 
 ```json
 {
-  "orgAlias": "dev"
+  "orgAlias": "banagro-dev"
 }
 ```
 
@@ -133,7 +184,7 @@ npm install mcp-salesforce-reader --save-dev
 
 ```json
 {
-  "orgAlias": "dev",
+  "orgAlias": "banagro-dev",
   "objectApiName": "Account"
 }
 ```
@@ -142,7 +193,7 @@ npm install mcp-salesforce-reader --save-dev
 
 ```json
 {
-  "orgAlias": "dev",
+  "orgAlias": "banagro-dev",
   "objectApiName": "Account",
   "fieldApiName": "AnnualRevenue"
 }
@@ -152,7 +203,7 @@ npm install mcp-salesforce-reader --save-dev
 
 ```json
 {
-  "orgAlias": "dev",
+  "orgAlias": "banagro-dev",
   "objectApiName": "Account",
   "fieldApiName": "AnnualRevenueFormatted__c"
 }
@@ -178,20 +229,20 @@ npm install mcp-salesforce-reader --save-dev
 }
 ```
 
-## Seguridad
+## Logging y Auditoría
 
-### Produccion
+Todas las operaciones se registran con:
 
-- **Modo solo lectura**: Las operaciones en orgs de producción son siempre de lectura
-- **Warnings**: Se muestra warning en primera conexión a producción
-- **Logs**: Todas las conexiones a producción se registran
+- Timestamp
+- Org alias
+- Environment (sandbox/production)
+- Tool ejecutada
+- Duración
+- Cantidad de registros
+- Query sanitizada (sin valores sensibles)
+- Estado de confirmación de producción
 
-### Contraseñas y Tokens
-
-- **Nunca** pongas credenciales reales en `opencode.json`
-- Usa variables de entorno o un archivo `.env` local
-- No hagas commit de `.env` al repositorio
-- Considera usar OAuth2 con JWT Bearer para mayor seguridad
+**Nunca se registran**: passwords, securityTokens, confirmationTokens, credenciales.
 
 ## Desarrollo
 
@@ -210,20 +261,19 @@ npm run clean    # Limpia archivos compilados
 src/
 ├── config/          # Carga y validación de configuración
 ├── auth/            # Autenticación con Salesforce
-├── policies/        # Validaciones de seguridad
+├── policies/        # Validaciones de seguridad y confirmación
 ├── tools/           # Herramientas MCP
 ├── enrichers/       # Enrichment de metadata
-├── logging/         # Sistema de logs
+├── logging/         # Sistema de logs y auditoría
 └── index.ts         # Punto de entrada
 ```
 
-## Próximas características
+## Cosas que NO hace este MCP
 
-- [ ] Tools de escritura (crear/modificar campos)
-- [ ] Autenticación OAuth2/JWT
-- [ ] Cache de metadata
-- [ ] Soporte para HTTP transport
-- [ ] Tests de integración
+- ❌ Operaciones de escritura (create, update, delete)
+- ❌ Ejecutar Apex
+- ❌ Deployment de metadata
+- ❌ Acceso sin confirmación a producción
 
 ## Licencia
 

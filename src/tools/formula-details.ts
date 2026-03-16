@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { createConnection } from '../auth/factory.js';
 import { validateOrgAccess } from '../policies/guard.js';
+import { isProductionOrg } from '../config/loader.js';
 import { logger } from '../logging/index.js';
 import { EnrichedField } from '../config/types.js';
 import { enrichField } from '../enrichers/field.js';
@@ -34,16 +35,33 @@ export async function formulaDetails(
   orgAlias: string;
   environment: string;
 }> {
-  logger.info(`Analyzing formula field '${params.fieldApiName}' on '${params.objectApiName}' in org '${params.orgAlias}'`, {
+  const startTime = Date.now();
+  const orgAlias = params.orgAlias;
+  const objectApiName = params.objectApiName;
+  const fieldApiName = params.fieldApiName;
+  
+  logger.info(`Analyzing formula field '${fieldApiName}' on '${objectApiName}' in org '${orgAlias}'`, {
     tool: 'formula_details',
-    orgAlias: params.orgAlias,
-    objectApiName: params.objectApiName,
-    fieldApiName: params.fieldApiName,
+    orgAlias,
+    objectApiName,
+    fieldApiName,
   });
 
-  const access = validateOrgAccess(params.orgAlias);
+  const access = validateOrgAccess(orgAlias);
+  const environment = isProductionOrg(orgAlias) ? 'production' : 'sandbox';
   
   if (!access.allowed) {
+    const duration = Date.now() - startTime;
+    logger.audit({
+      orgAlias,
+      environment,
+      tool: 'get_formula_field_details',
+      status: 'blocked',
+      durationMs: duration,
+      requiresConfirmation: access.requiresConfirmation,
+      wasConfirmed: access.confirmed,
+      error: access.error,
+    });
     throw new Error(access.error);
   }
 
@@ -51,25 +69,61 @@ export async function formulaDetails(
     logger.warn(access.warning, { tool: 'formula_details' });
   }
 
-  const connection = await createConnection(params.orgAlias);
+  const connection = await createConnection(orgAlias);
   const conn = connection.getConnection();
 
-  const describeResult: any = await conn.describe(params.objectApiName);
+  let describeResult: any;
+  try {
+    describeResult = await conn.describe(objectApiName);
+  } catch (e) {
+    const duration = Date.now() - startTime;
+    logger.audit({
+      orgAlias,
+      environment,
+      tool: 'get_formula_field_details',
+      status: 'error',
+      durationMs: duration,
+      requiresConfirmation: access.requiresConfirmation,
+      wasConfirmed: access.confirmed,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    throw e;
+  }
   
   const field: any = describeResult.fields?.find(
-    (f: any) => f.name === params.fieldApiName
+    (f: any) => f.name === fieldApiName
   );
 
   if (!field) {
-    throw new Error(
-      `Field '${params.fieldApiName}' not found on object '${params.objectApiName}' in org '${params.orgAlias}'`
-    );
+    const duration = Date.now() - startTime;
+    const error = `Field '${fieldApiName}' not found on object '${objectApiName}' in org '${orgAlias}'`;
+    logger.audit({
+      orgAlias,
+      environment,
+      tool: 'get_formula_field_details',
+      status: 'error',
+      durationMs: duration,
+      requiresConfirmation: access.requiresConfirmation,
+      wasConfirmed: access.confirmed,
+      error,
+    });
+    throw new Error(error);
   }
 
   if (!field.calculated) {
-    throw new Error(
-      `Field '${params.fieldApiName}' is not a formula field`
-    );
+    const duration = Date.now() - startTime;
+    const error = `Field '${fieldApiName}' is not a formula field`;
+    logger.audit({
+      orgAlias,
+      environment,
+      tool: 'get_formula_field_details',
+      status: 'error',
+      durationMs: duration,
+      requiresConfirmation: access.requiresConfirmation,
+      wasConfirmed: access.confirmed,
+      error,
+    });
+    throw new Error(error);
   }
 
   const enriched = enrichField(field);
@@ -91,13 +145,26 @@ export async function formulaDetails(
     likelyImpactAreas: impactAreas,
   };
 
-  logger.info(`Successfully analyzed formula field '${params.fieldApiName}'`, {
+  const duration = Date.now() - startTime;
+
+  logger.info(`Successfully analyzed formula field '${fieldApiName}'`, {
     tool: 'formula_details',
-    orgAlias: params.orgAlias,
-    objectApiName: params.objectApiName,
-    fieldApiName: params.fieldApiName,
+    orgAlias,
+    objectApiName,
+    fieldApiName,
     complexity: analysis.complexity,
     referenceCount: references.length,
+    durationMs: duration,
+  });
+
+  logger.audit({
+    orgAlias,
+    environment,
+    tool: 'get_formula_field_details',
+    status: 'success',
+    durationMs: duration,
+    requiresConfirmation: access.requiresConfirmation,
+    wasConfirmed: access.confirmed,
   });
 
   return {
@@ -105,9 +172,9 @@ export async function formulaDetails(
       field: enriched,
       analysis,
     },
-    objectApiName: params.objectApiName,
-    orgAlias: params.orgAlias,
-    environment: connection.isProduction() ? 'production' : 'sandbox',
+    objectApiName,
+    orgAlias,
+    environment,
   };
 }
 

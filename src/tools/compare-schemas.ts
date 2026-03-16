@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { createConnection } from '../auth/factory.js';
 import { validateOrgAccess } from '../policies/guard.js';
+import { isProductionOrg } from '../config/loader.js';
 import { logger } from '../logging/index.js';
 import { SchemaComparisonResult, EnrichedField } from '../config/types.js';
 import { enrichField } from '../enrichers/field.js';
@@ -20,31 +21,85 @@ export async function compareSchemas(
 ): Promise<{
   comparison: SchemaComparisonResult;
 }> {
-  logger.info(`Comparing schemas between '${params.orgAlias}' and '${params.targetOrgAlias}'`, {
+  const startTime = Date.now();
+  const orgAlias = params.orgAlias;
+  const targetOrgAlias = params.targetOrgAlias;
+  
+  logger.info(`Comparing schemas between '${orgAlias}' and '${targetOrgAlias}'`, {
     tool: 'compare_schemas',
-    sourceOrg: params.orgAlias,
-    targetOrg: params.targetOrgAlias,
+    sourceOrg: orgAlias,
+    targetOrg: targetOrgAlias,
     objectCount: params.objectApiNames?.length || 'all',
   });
 
-  const sourceAccess = validateOrgAccess(params.orgAlias);
-  const targetAccess = validateOrgAccess(params.targetOrgAlias);
+  const sourceAccess = validateOrgAccess(orgAlias);
+  const targetAccess = validateOrgAccess(targetOrgAlias);
+  const sourceEnvironment = isProductionOrg(orgAlias) ? 'production' : 'sandbox';
+  const targetEnvironment = isProductionOrg(targetOrgAlias) ? 'production' : 'sandbox';
   
   if (!sourceAccess.allowed) {
+    const duration = Date.now() - startTime;
+    logger.audit({
+      orgAlias,
+      environment: sourceEnvironment,
+      tool: 'compare_schemas',
+      status: 'blocked',
+      durationMs: duration,
+      requiresConfirmation: sourceAccess.requiresConfirmation,
+      wasConfirmed: sourceAccess.confirmed,
+      error: sourceAccess.error,
+    });
     throw new Error(sourceAccess.error);
   }
+  
   if (!targetAccess.allowed) {
+    const duration = Date.now() - startTime;
+    logger.audit({
+      orgAlias: targetOrgAlias,
+      environment: targetEnvironment,
+      tool: 'compare_schemas',
+      status: 'blocked',
+      durationMs: duration,
+      requiresConfirmation: targetAccess.requiresConfirmation,
+      wasConfirmed: targetAccess.confirmed,
+      error: targetAccess.error,
+    });
     throw new Error(targetAccess.error);
   }
 
-  const sourceConnection = await createConnection(params.orgAlias);
-  const targetConnection = await createConnection(params.targetOrgAlias);
+  if (sourceAccess.warning) {
+    logger.warn(sourceAccess.warning, { tool: 'compare_schemas' });
+  }
+  if (targetAccess.warning) {
+    logger.warn(targetAccess.warning, { tool: 'compare_schemas' });
+  }
+
+  const sourceConnection = await createConnection(orgAlias);
+  const targetConnection = await createConnection(targetOrgAlias);
 
   const sourceConn = sourceConnection.getConnection();
   const targetConn = targetConnection.getConnection();
 
-  const sourceDescribe: any = await sourceConn.describeGlobal();
-  const targetDescribe: any = await targetConn.describeGlobal();
+  let sourceDescribe: any;
+  let targetDescribe: any;
+  
+  try {
+    sourceDescribe = await sourceConn.describeGlobal();
+    targetDescribe = await targetConn.describeGlobal();
+  } catch (e) {
+    const duration = Date.now() - startTime;
+    logger.audit({
+      orgAlias,
+      environment: sourceEnvironment,
+      tool: 'compare_schemas',
+      status: 'error',
+      durationMs: duration,
+      requiresConfirmation: sourceAccess.requiresConfirmation || targetAccess.requiresConfirmation,
+      wasConfirmed: sourceAccess.confirmed && targetAccess.confirmed,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    throw e;
+  }
 
   const sourceObjects = new Map<string, any>(
     (sourceDescribe.sobjects || []).map((s: any) => [s.name || '', s])
@@ -153,8 +208,8 @@ export async function compareSchemas(
   }
 
   const comparison: SchemaComparisonResult = {
-    sourceOrg: params.orgAlias,
-    targetOrg: params.targetOrgAlias,
+    sourceOrg: orgAlias,
+    targetOrg: targetOrgAlias,
     comparedAt: new Date().toISOString(),
     summary: {
       sourceObjectCount: sourceObjects.size,
@@ -169,11 +224,25 @@ export async function compareSchemas(
     }),
   };
 
+  const duration = Date.now() - startTime;
+
   logger.info(`Schema comparison completed: ${differences.length} objects with differences`, {
     tool: 'compare_schemas',
-    sourceOrg: params.orgAlias,
-    targetOrg: params.targetOrgAlias,
+    sourceOrg: orgAlias,
+    targetOrg: targetOrgAlias,
     diffCount: differences.length,
+    durationMs: duration,
+  });
+
+  logger.audit({
+    orgAlias,
+    environment: sourceEnvironment,
+    tool: 'compare_schemas',
+    status: 'success',
+    durationMs: duration,
+    recordCount: differences.length,
+    requiresConfirmation: sourceAccess.requiresConfirmation || targetAccess.requiresConfirmation,
+    wasConfirmed: sourceAccess.confirmed && targetAccess.confirmed,
   });
 
   return { comparison };

@@ -4,6 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { loadConfig } from './config/loader.js';
 import { logger } from './logging/index.js';
+import { confirmProductionAccess } from './policies/guard.js';
 import { listObjects } from './tools/list-objects.js';
 import { describeObject } from './tools/describe-object.js';
 import { listFields } from './tools/list-fields.js';
@@ -23,6 +24,24 @@ const server = new Server({
 server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
         tools: [
+            {
+                name: 'confirm_production_access',
+                description: 'Confirm access to production orgs. Required before using any tool on a production org. Get the token from PRODUCTION_CONFIRMATION_TOKEN env variable.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        orgAlias: {
+                            type: 'string',
+                            description: 'Alias of the production org to confirm access for',
+                        },
+                        confirmationToken: {
+                            type: 'string',
+                            description: 'Confirmation token (get from PRODUCTION_CONFIRMATION_TOKEN env variable)',
+                        },
+                    },
+                    required: ['orgAlias', 'confirmationToken'],
+                },
+            },
             {
                 name: 'list_objects',
                 description: 'List all available objects in a Salesforce org',
@@ -123,7 +142,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: 'query_soql_readonly',
-                description: 'Execute a SOQL query in read-only mode',
+                description: 'Execute a SOQL query in read-only mode (SELECT only)',
                 inputSchema: {
                     type: 'object',
                     properties: {
@@ -133,11 +152,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         },
                         query: {
                             type: 'string',
-                            description: 'SOQL query to execute',
+                            description: 'SOQL query to execute (SELECT only, LIMIT enforced)',
                         },
                         limit: {
                             type: 'number',
-                            description: 'Maximum number of records (default: 100)',
+                            description: 'Maximum number of records (default: 100, max: 1000 in prod)',
                         },
                     },
                     required: ['orgAlias', 'query'],
@@ -145,7 +164,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: 'query_tooling_readonly',
-                description: 'Execute a Tooling API query for metadata',
+                description: 'Execute a Tooling API query for metadata (SELECT only)',
                 inputSchema: {
                     type: 'object',
                     properties: {
@@ -155,11 +174,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         },
                         query: {
                             type: 'string',
-                            description: 'Tooling API SOQL query',
+                            description: 'Tooling API SOQL query (SELECT only)',
                         },
                         limit: {
                             type: 'number',
-                            description: 'Maximum number of records (default: 50)',
+                            description: 'Maximum number of records (default: 50, max: 500 in prod)',
                         },
                     },
                     required: ['orgAlias', 'query'],
@@ -201,6 +220,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const toolArgs = args;
     try {
         switch (name) {
+            case 'confirm_production_access': {
+                const orgAlias = String(toolArgs.orgAlias);
+                const confirmationToken = String(toolArgs.confirmationToken);
+                const success = confirmProductionAccess(orgAlias, confirmationToken);
+                if (success) {
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: JSON.stringify({
+                                    success: true,
+                                    message: `Production access confirmed for org '${orgAlias}'. You can now use other tools on this org.`,
+                                    confirmedOrg: orgAlias,
+                                }, null, 2)
+                            }],
+                    };
+                }
+                else {
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: JSON.stringify({
+                                    success: false,
+                                    error: 'Invalid confirmation token or org not configured as production',
+                                })
+                            }],
+                        isError: true,
+                    };
+                }
+            }
             case 'list_objects': {
                 const result = await listObjects({ orgAlias: String(toolArgs.orgAlias) });
                 return {

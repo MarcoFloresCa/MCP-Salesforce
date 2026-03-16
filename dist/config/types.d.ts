@@ -11,12 +11,32 @@ export interface ServerConfig {
     orgs: OrgConfig[];
     defaultOrgAlias: string;
     logLevel: 'debug' | 'info' | 'warn' | 'error';
+    productionConfirmationToken?: string;
 }
 export interface OrgAccessResult {
     allowed: boolean;
     mode: 'read-only' | 'read-write';
+    requiresConfirmation: boolean;
+    confirmed: boolean;
     warning?: string;
     error?: string;
+}
+export interface SessionConfirmation {
+    orgAlias: string;
+    confirmedAt: Date;
+}
+export interface AuditLogEntry {
+    timestamp: string;
+    orgAlias: string;
+    environment: Environment;
+    tool: string;
+    status: 'success' | 'error' | 'blocked';
+    durationMs?: number;
+    recordCount?: number;
+    querySanitized?: string;
+    error?: string;
+    requiresConfirmation: boolean;
+    wasConfirmed: boolean;
 }
 export interface EnrichedField {
     apiName: string;

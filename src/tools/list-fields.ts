@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { createConnection } from '../auth/factory.js';
 import { validateOrgAccess } from '../policies/guard.js';
+import { isProductionOrg } from '../config/loader.js';
 import { logger } from '../logging/index.js';
 import { EnrichedField } from '../config/types.js';
 import { enrichField } from '../enrichers/field.js';
@@ -22,15 +23,31 @@ export async function listFields(
   environment: string;
   count: number;
 }> {
-  logger.info(`Listing fields for object '${params.objectApiName}' in org '${params.orgAlias}'`, {
+  const startTime = Date.now();
+  const orgAlias = params.orgAlias;
+  const objectApiName = params.objectApiName;
+  
+  logger.info(`Listing fields for object '${objectApiName}' in org '${orgAlias}'`, {
     tool: 'list_fields',
-    orgAlias: params.orgAlias,
-    objectApiName: params.objectApiName,
+    orgAlias,
+    objectApiName,
   });
 
-  const access = validateOrgAccess(params.orgAlias);
+  const access = validateOrgAccess(orgAlias);
+  const environment = isProductionOrg(orgAlias) ? 'production' : 'sandbox';
   
   if (!access.allowed) {
+    const duration = Date.now() - startTime;
+    logger.audit({
+      orgAlias,
+      environment,
+      tool: 'list_fields',
+      status: 'blocked',
+      durationMs: duration,
+      requiresConfirmation: access.requiresConfirmation,
+      wasConfirmed: access.confirmed,
+      error: access.error,
+    });
     throw new Error(access.error);
   }
 
@@ -38,10 +55,26 @@ export async function listFields(
     logger.warn(access.warning, { tool: 'list_fields' });
   }
 
-  const connection = await createConnection(params.orgAlias);
+  const connection = await createConnection(orgAlias);
   const conn = connection.getConnection();
 
-  const describeResult: any = await conn.describe(params.objectApiName);
+  let describeResult: any;
+  try {
+    describeResult = await conn.describe(objectApiName);
+  } catch (e) {
+    const duration = Date.now() - startTime;
+    logger.audit({
+      orgAlias,
+      environment,
+      tool: 'list_fields',
+      status: 'error',
+      durationMs: duration,
+      requiresConfirmation: access.requiresConfirmation,
+      wasConfirmed: access.confirmed,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    throw e;
+  }
   
   let fields = (describeResult.fields || []).map((f: any) => enrichField(f));
 
@@ -49,18 +82,32 @@ export async function listFields(
     fields = fields.filter((f: EnrichedField) => f.isFormula);
   }
 
-  logger.info(`Found ${fields.length} fields for object '${params.objectApiName}'`, {
+  const duration = Date.now() - startTime;
+
+  logger.info(`Found ${fields.length} fields for object '${objectApiName}'`, {
     tool: 'list_fields',
-    orgAlias: params.orgAlias,
-    objectApiName: params.objectApiName,
+    orgAlias,
+    objectApiName,
     fieldCount: fields.length,
+    durationMs: duration,
+  });
+
+  logger.audit({
+    orgAlias,
+    environment,
+    tool: 'list_fields',
+    status: 'success',
+    durationMs: duration,
+    recordCount: fields.length,
+    requiresConfirmation: access.requiresConfirmation,
+    wasConfirmed: access.confirmed,
   });
 
   return {
     fields,
-    objectApiName: params.objectApiName,
-    orgAlias: params.orgAlias,
-    environment: connection.isProduction() ? 'production' : 'sandbox',
+    objectApiName,
+    orgAlias,
+    environment,
     count: fields.length,
   };
 }

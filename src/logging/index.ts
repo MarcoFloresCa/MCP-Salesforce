@@ -1,3 +1,5 @@
+import { Environment, AuditLogEntry } from '../config/types.js';
+
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 interface LogEntry {
@@ -10,6 +12,7 @@ interface LogEntry {
 class Logger {
   private level: LogLevel = 'info';
   private productionWarningsLogged: Set<string> = new Set();
+  private auditLogs: AuditLogEntry[] = [];
 
   setLevel(level: LogLevel) {
     this.level = level;
@@ -54,7 +57,7 @@ class Logger {
     if (!context) return undefined;
 
     const sanitized: Record<string, unknown> = {};
-    const sensitiveKeys = ['password', 'securityToken', 'sessionId', 'accessToken', 'consumerSecret'];
+    const sensitiveKeys = ['password', 'securityToken', 'sessionId', 'accessToken', 'consumerSecret', 'confirmationToken', 'token'];
 
     for (const [key, value] of Object.entries(context)) {
       const lowerKey = key.toLowerCase();
@@ -66,6 +69,49 @@ class Logger {
     }
 
     return sanitized;
+  }
+
+  private logToAudit(entry: AuditLogEntry): void {
+    this.auditLogs.push(entry);
+    
+    // Keep only last 1000 entries
+    if (this.auditLogs.length > 1000) {
+      this.auditLogs.shift();
+    }
+  }
+
+  audit(params: {
+    orgAlias: string;
+    environment: Environment;
+    tool: string;
+    status: 'success' | 'error' | 'blocked';
+    durationMs?: number;
+    recordCount?: number;
+    querySanitized?: string;
+    error?: string;
+    requiresConfirmation: boolean;
+    wasConfirmed: boolean;
+  }): void {
+    const entry: AuditLogEntry = {
+      timestamp: new Date().toISOString(),
+      ...params,
+    };
+
+    this.logToAudit(entry);
+
+    // Also log as regular log
+    const logLevel = params.status === 'error' ? 'error' : params.status === 'blocked' ? 'warn' : 'info';
+    this.log(logLevel, `Audit: ${params.tool} on ${params.orgAlias}`, {
+      orgAlias: params.orgAlias,
+      environment: params.environment,
+      tool: params.tool,
+      status: params.status,
+      durationMs: params.durationMs,
+      recordCount: params.recordCount,
+      querySanitized: params.querySanitized,
+      requiresConfirmation: params.requiresConfirmation,
+      wasConfirmed: params.wasConfirmed,
+    });
   }
 
   debug(message: string, context?: Record<string, unknown>) {
@@ -94,6 +140,10 @@ class Logger {
 
   resetProductionWarnings() {
     this.productionWarningsLogged.clear();
+  }
+
+  getAuditLogs(): AuditLogEntry[] {
+    return [...this.auditLogs];
   }
 }
 
