@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "salesforce-reader": {
+      "command": "node",
+      "args": ["./node_modules/mcp-salesforce-reader/dist/index.js"],
+      "env": {
+        "SALESFORCE_ORGS_JSON": "[{\"alias\":\"dev\",\"environment\":\"sandbox\",\"loginUrl\":\"https://test.salesforce.com\",\"username\":\"user@dev.org\",\"password\":\"xxx\",\"securityToken\":\"xxx\"},{\"alias\":\"uat\",\"environment\":\"sandbox\",\"loginUrl\":\"https://test.salesforce.com\",\"username\":\"user@uat.org\",\"password\":\"xxx\",\"securityToken\":\"xxx\"},{\"alias\":\"prod\",\"environment\":\"production\",\"loginUrl\":\"https://login.salesforce.com\",\"username\":\"user@prod.org\",\"password\":\"xxx\",\"securityToken\":\"xxx\"}]",
+        "DEFAULT_ORG_ALIAS": "dev",
+        "LOG_LEVEL": "info"
+      }
+    }
+  }
+}
