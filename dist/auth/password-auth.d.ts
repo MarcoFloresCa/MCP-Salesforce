@@ -1,4 +1,3 @@
-import { Connection } from 'jsforce';
 import { OrgConfig } from '../config/types.js';
 import { IConnectionAdapter, ConnectionOptions } from './interfaces.js';
 export declare class PasswordAuthAdapter implements IConnectionAdapter {
@@ -7,7 +6,7 @@ export declare class PasswordAuthAdapter implements IConnectionAdapter {
     private connected;
     constructor(orgConfig: OrgConfig, options?: ConnectionOptions);
     connect(): Promise<void>;
-    getConnection(): Connection;
+    getConnection(): any;
     getOrgAlias(): string;
     isProduction(): boolean;
     close(): Promise<void>;

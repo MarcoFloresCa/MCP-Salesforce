@@ -1,5 +1,6 @@
-import { Connection } from 'jsforce';
+import jsforce from 'jsforce';
 import { logger } from '../logging/index.js';
+const Connection = jsforce.Connection;
 export class PasswordAuthAdapter {
     connection;
     orgConfig;

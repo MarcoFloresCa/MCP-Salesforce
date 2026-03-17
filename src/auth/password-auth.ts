@@ -1,10 +1,12 @@
-import { Connection } from 'jsforce';
+import jsforce from 'jsforce';
 import { OrgConfig } from '../config/types.js';
 import { IConnectionAdapter, ConnectionOptions } from './interfaces.js';
 import { logger } from '../logging/index.js';
 
+const Connection = jsforce.Connection;
+
 export class PasswordAuthAdapter implements IConnectionAdapter {
-  private connection: Connection;
+  private connection: InstanceType<typeof Connection>;
   private orgConfig: OrgConfig;
   private connected: boolean = false;
 
@@ -60,7 +62,7 @@ export class PasswordAuthAdapter implements IConnectionAdapter {
     }
   }
 
-  getConnection(): Connection {
+  getConnection(): any {
     if (!this.connected) {
       throw new Error(`Not connected to org '${this.orgConfig.alias}'. Call connect() first.`);
     }
