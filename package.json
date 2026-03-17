@@ -22,7 +22,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "dotenv": "^16.4.0",
-    "jsforce": "^1.11.1",
+    "jsforce": "^3.10.14",
     "zod": "^3.23.0"
   },
   "devDependencies": {
